@@ -67,6 +67,7 @@ def print_table(tbl_list, separate_head=True):
 
 
 def http_request(url, data=None):
+    """Make an HTTP request... urllib2 is insane"""
     request = urllib2.Request(url, data)
     opener = urllib2.OpenerDirector()
     opener.add_handler(urllib2.HTTPHandler())
@@ -76,6 +77,11 @@ def http_request(url, data=None):
     with contextlib.closing(opener.open(request)) as http_resp:
         response = http_resp.read()
     return http_resp.code, response
+
+def print_http_error(url, status_code, response):
+    """Show problems with HTTP request"""
+    error("FAILED!\nStatus code: {}\nResponse: {}\nURL: {}".format(
+            status_code, response, url))
 
 
 class FakeSectionHead(object):
@@ -150,9 +156,7 @@ def save_payload(payload):
         assert(json.loads(response)['ok'] is True)
         success("opslog saved!")
     except (ValueError, KeyError, AssertionError, urllib2.URLError):
-        error("FAILED!\nStatus code: {}\nResponse: {}".format(
-            status_code, response))
-        error("ElasticSearch URL: {}".format(ES_URL))
+        print_http_error(ES_URL, status_code, response)
 
 
 def post_webhook(payload):
@@ -164,11 +168,9 @@ def post_webhook(payload):
     try:
         status_code, response = http_request(WEBHOOK_URL, payload)
         assert(status_code < 300)
-        success("posted webook")
+        success("posted webook to {}".format(WEBHOOK_URL))
     except (ValueError, KeyError, AssertionError, urllib2.URLError):
-        error("FAILED!\nStatus code: {}\nResponse: {}".format(
-            status_code, response))
-        error("Webhook URL: {}".format(WEBHOOK_URL))
+        print_http_error(WEBHOOK_URL, status_code, response)
 
 
 def get_logs(host):
@@ -181,15 +183,14 @@ def get_logs(host):
         resp_dict = json.loads(response)
         logs = [hit['_source'] for hit in resp_dict['hits']['hits']]
     except (ValueError, KeyError, urllib2.URLError):
-        error("FAILED!\nStatus code: {}\nResponse: {}".format(
-            status_code, response))
-        error("ElasticSearch URL: {}".format(ES_URL))
+        print_http_error(url, status_code, response)
         return []
 
     return logs
 
 
 def print_logs(logs, host):
+    """Parse and output logs"""
     if logs:
         print_table(logs)
     else:
