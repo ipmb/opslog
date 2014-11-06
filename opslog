@@ -17,6 +17,7 @@ except ImportError:
 
 # URL to ElasticSearch instance to store opslogs
 ES_URL = 'http://localhost:9200/opslog/log'
+WEBHOOK_URL = 'https://zapier.com/hooks/catch/your-hook-code-here/'
 CONFIG_FILE = '/etc/opslog.conf'
 
 
@@ -67,6 +68,17 @@ def print_table(tbl_list, separate_head=True):
             print("-" * (sum(widths) + 3 * (len(widths) - 1)))
 
 
+def http_request(url, data=None):
+    request = urllib2.Request(url, data)
+    opener = urllib2.OpenerDirector()
+    opener.add_handler(urllib2.HTTPHandler())
+    opener.add_handler(urllib2.HTTPSHandler())
+    opener.add_handler(urllib2.HTTPDefaultErrorHandler())
+
+    with contextlib.closing(opener.open(request)) as http_resp:
+        response = http_resp.read()
+    return http_resp.code, response
+
 class FakeSectionHead(object):
     """Fakes an ini section header like expected by configparser"""
     header = '[global]'
@@ -87,14 +99,15 @@ class FakeSectionHead(object):
 
 def parse_config():
     """Check config file for settings and set global"""
-    global ES_URL
-    es_key = 'elasticsearch_url'
+    global ES_URL, WEBHOOK_URL
     config = configparser.SafeConfigParser()
     try:
         with open(CONFIG_FILE) as cfg_file:
             config.readfp(FakeSectionHead(cfg_file))
-        ES_URL = config.get('global', es_key)
-    except (configparser.NoSectionError, IOError):
+        ES_URL = config.get('global', 'elasticsearch_url', ES_URL)
+        WEBHOOK_URL = config.get('global', 'webhook_url', WEBHOOK_URL)
+
+    except (configparser.NoSectionError, configparser.NoOptionError, IOError):
         pass
 
 
@@ -133,40 +146,46 @@ def build_payload(args):
 
 def save_payload(payload):
     """Save log to ES"""
-    request = urllib2.Request(ES_URL, payload)
-    opener = urllib2.OpenerDirector()
-    opener.add_handler(urllib2.HTTPHandler())
-    opener.add_handler(urllib2.HTTPDefaultErrorHandler())
+    status_code = 0
     response = ''
-    http_resp = namedtuple('Response', 'code')(code=0)
     try:
-        with contextlib.closing(opener.open(request)) as http_resp:
-            response = http_resp.read()
+        status_code, response = http_request(ES_URL, payload)
         assert(json.loads(response)['ok'] is True)
         success("opslog saved!")
-    except (ValueError, KeyError, urllib2.URLError, AssertionError):
+    except (ValueError, KeyError, AssertionError, urllib2.URLError):
         error("FAILED!\nStatus code: {}\nResponse: {}".format(
-            http_resp.code, response))
+            status_code, response))
+        error("ElasticSearch URL: {}".format(ES_URL))
+
+
+def post_webhook(payload):
+    """Post JSON to webhook URL"""
+    if not WEBHOOK_URL:
+        return
+    status_code = 0
+    response = ''
+    try:
+        status_code, response = http_request(WEBHOOK_URL, payload)
+        assert(status_code < 300)
+        success("posted webook")
+    except (ValueError, KeyError, AssertionError, urllib2.URLError):
+        error("FAILED!\nStatus code: {}\nResponse: {}".format(
+            status_code, response))
         error("ElasticSearch URL: {}".format(ES_URL))
 
 
 def get_logs(host):
     """Retreive logs for host from ES"""
     url = '{}/_search?q=host:{}&sort=timestamp:desc'.format(ES_URL, host)
-    request = urllib2.Request(url)
-    opener = urllib2.OpenerDirector()
-    opener.add_handler(urllib2.HTTPHandler())
-    opener.add_handler(urllib2.HTTPDefaultErrorHandler())
+    status_code = 0
     response = ''
-    http_resp = namedtuple('Response', 'code')(code=0)
     try:
-        with contextlib.closing(opener.open(request)) as http_resp:
-            response = http_resp.read()
-            resp_dict = json.loads(response)
-            logs = [hit['_source'] for hit in resp_dict['hits']['hits']]
+        status_code, response = http_request(url)
+        resp_dict = json.loads(response)
+        logs = [hit['_source'] for hit in resp_dict['hits']['hits']]
     except (ValueError, KeyError, urllib2.URLError):
         error("FAILED!\nStatus code: {}\nResponse: {}".format(
-            http_resp.code, response))
+            status_code, response))
         error("ElasticSearch URL: {}".format(ES_URL))
         return []
 
@@ -190,6 +209,7 @@ def opslog():
     elif args.command == 'add':
         payload = build_payload(args)
         save_payload(payload)
+        post_webhook(payload)
 
 
 if __name__ == '__main__':
