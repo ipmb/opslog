@@ -1,9 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
-import copy
 import contextlib
-from collections import namedtuple
 import datetime
 import json
 import getpass
@@ -79,6 +77,7 @@ def http_request(url, data=None):
         response = http_resp.read()
     return http_resp.code, response
 
+
 class FakeSectionHead(object):
     """Fakes an ini section header like expected by configparser"""
     header = '[global]'
@@ -136,11 +135,9 @@ def validate_args(args):
 
 def build_payload(args):
     """Build ES payload from CLI args"""
-    body = copy.deepcopy(args.__dict__)
-    del(body['command'])
-    body.update({
-        'timestamp': datetime.datetime.now().isoformat(),
-    })
+    body = {'timestamp': datetime.datetime.now().isoformat()}
+    for key in ('host', 'user', 'message'):
+        body[key] = getattr(args, key)
     return json.dumps(body)
 
 
@@ -171,7 +168,7 @@ def post_webhook(payload):
     except (ValueError, KeyError, AssertionError, urllib2.URLError):
         error("FAILED!\nStatus code: {}\nResponse: {}".format(
             status_code, response))
-        error("ElasticSearch URL: {}".format(ES_URL))
+        error("Webhook URL: {}".format(WEBHOOK_URL))
 
 
 def get_logs(host):
